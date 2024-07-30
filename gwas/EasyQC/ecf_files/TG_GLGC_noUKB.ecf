@@ -1,0 +1,121 @@
+####################################################################################################
+## Summary statistics QC
+## Trait: Triglycerides (TG)
+## Cohort: GLGC without UKB
+## Reference: 
+####################################################################################################
+
+#### Define input summary statistics
+DEFINE --strSeparator TAB
+        --strMissing .
+        --acolIn CHR;POS;SNP;A1;A2;MAF;Effect;SE;Pval;N
+        --acolInClasses integer;integer;character;character;character;numeric;numeric;numeric;numeric;numeric
+        --pathOut ./results/
+
+#### Path to input summary statistics
+EASYIN --fileIn ../../pQC.without_UKB_logTG_INV_EUR_HRC_1KGP3_others_ALL.meta.singlevar.results.txt
+        --fileInShortName TG_GLGC_noUKB
+
+START EASYQC
+
+#### Step 1: Removal of missing values
+CLEAN --rcdClean is.na(CHR) --strCleanName numDrop_Missing_CHR
+CLEAN --rcdClean is.na(POS) --strCleanName numDrop_Missing_POS
+CLEAN --rcdClean is.na(SNP) --strCleanName numDrop_Missing_SNP
+CLEAN --rcdClean is.na(A1) --strCleanName numDrop_Missing_A1
+CLEAN --rcdClean is.na(A2) --strCleanName numDrop_Missing_A2
+CLEAN --rcdClean is.na(MAF) --strCleanName numDrop_Missing_MAF
+CLEAN --rcdClean is.na(Effect) --strCleanName numDrop_Missing_BETA
+CLEAN --rcdClean is.na(SE) --strCleanName numDrop_Missing_SE
+CLEAN --rcdClean is.na(Pval) --strCleanName numDrop_Missing_P
+CLEAN --rcdClean is.na(N) --strCleanName numDrop_Missing_N
+
+#### Step 2: Removal of insensible values
+CLEAN --rcdClean (MAF<0)|(MAF>1) --strCleanName numDrop_invalid_MAF
+CLEAN --rcdClean (Pval<0)|(Pval>1) --strCleanName numDrop_invalid_P
+CLEAN --rcdClean (SE<=0)|(SE==Inf) --strCleanName numDrop_invalid_SE
+CLEAN --rcdClean abs(Effect)==Inf --strCleanName numDrop_invalid_BETA
+
+#### Step 3: Removal of sex chromosome
+CLEAN --rcdClean !CHR%in%c(1:22,NA) --strCleanName numDropSNP_ChrXY
+
+#### Step 4: Inadmissible alles -> removal of INDELs and variants with non-A/C/G/T alleles
+HARMONIZEALLELES --colInA1 A1 --colInA2 A2
+CLEAN --rcdClean (A1%in%c('I','D')) | (A2%in%c('I','D')) --strCleanName numDrop_INDEL
+
+#### Step 5: Monomorphic SNP -> remove mono-morphic SNP and 
+CLEAN --rcdClean (MAF==0)|(MAF==1) --strCleanName numDrop_Monomorph
+
+#### Step 6: MAF filtering -> Removal of MAF < 0.005
+CLEAN --rcdClean MAF<0.005 --strCleanName numDrop_lowMAF
+
+#### Step 7: Imputation quality -> Removal of INFO < 0.9
+## CLEAN --rcdClean INFO<0.9 --strCleanName numDrop_lowINFO
+
+#### Step 8: Removal of multiallelics 
+CLEAN --rcdClean !(length(A1)==1)|!(length(A2)==1) --strCleanName numDrop_multiallelic
+
+#### Step 9: Harmonization of marker names (compile 'cptid') by matching with 1000 Genome phase 3 reference
+CREATECPTID --fileMap /data1/sanghyeon/Projects/MetabolicSyndrome/commonFiles/EasyQC_ref/subset.rsmid_machsvs_mapb37.1000G_p3v5.merged_mach_impute.v3.corrpos.gz
+			--colMapMarker rsmid
+			--colMapChr chr
+			--colMapPos pos
+			--colInMarker SNP
+			--colInA1 A1
+			--colInA2 A2
+			--colInChr CHR
+			--colInPos POS
+
+#### Step 10: Duplicates removal based on cptid generated from Step 9
+CLEANDUPLICATES --colInMarker cptid --strMode removeall
+
+
+#### Step 11: Removal of SNPs absent in the reference (1000 Genome phase 3 European)
+MERGE 	--colInMarker cptid
+		--fileRef /data1/sanghyeon/Projects/MetabolicSyndrome/commonFiles/EasyQC_ref/subset.1000GP_p3v5_legends_rbind.noDup.noMono.noCnv.noCnAll.afref.EUR.txt.gz
+			--acolIn cptid;ea;oa;eaf 
+			--acolInClasses character;character;character;numeric
+		--strRefSuffix .ref
+		--colRefMarker cptid
+        --blnInAll 0
+		--blnWriteNotInRef 1
+
+#### Step 12: All allele mismatches will be removed (e.g. A/T in input, A/C in reference) [based on 1000 Genome phase 3]
+ADJUSTALLELES 	--colInA1 A1 
+				--colInA2 A2 
+				--colInFreq MAF
+				--colInBeta Effect
+				--colRefA1 ea.ref
+				--colRefA2 oa.ref
+				--blnRemoveMismatch 1
+				--blnRemoveInvalid 1
+				--blnRemoveRefInvalid 1
+
+
+#### Step 13: Make uniqID column -> chr:pos:a1:a2 format
+ADDCOL --rcdAddCol paste(CHR, POS, A1, A2, sep=':') --colOut uniqID
+
+
+#### Step 14: Cleaned summary statistics information
+AFCHECK --colInFreq MAF
+		--colRefFreq eaf.ref
+		--numLimOutlier 0.2
+		--blnPlotAll 0
+
+CALCULATE --rcdCalc max(N,na.rm=T) --strCalcName N_max
+GC	--colPval Pval --blnSuppressCorrection 1
+
+PZPLOT	--colBeta Effect 
+		--colSe SE 
+		--colPval Pval
+
+#### Step 15: Rearrange the columns and write CLEANED out
+GETCOLS --acolOut CHR;POS;SNP;uniqID;cptid;A1;A2;MAF;Effect;SE;Pval;N
+
+
+#### Step 16: Write cleaned summary statistics
+WRITE	--strPrefix CLEANED. 
+		--strMissing NA
+		--strMode txt
+
+STOP EASYQC
